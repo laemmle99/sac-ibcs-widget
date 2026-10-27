@@ -10,22 +10,45 @@ class IJUNOXY extends HTMLElement{
  set dataBinding(value){this._dataBinding=value;this.render();}
  get dataBinding(){return this._dataBinding;}
  getBinding(){return this._dataBinding||this.dataBindings?.dataBinding||null;}
- numeric(cell){if(cell===null||cell===undefined)return NaN;if(typeof cell==='number')return cell;if(typeof cell==='string')return Number(cell.replace(/,/g,''));if(typeof cell==='object'){for(const key of ['rawValue','value','raw','formattedValue']){if(cell[key]!=null){const v=this.numeric(cell[key]);if(Number.isFinite(v))return v;}}}return NaN;}
- readPoints(binding){const data=binding?.data;if(!Array.isArray(data))return [];
- // SAC result rows contain dimensions plus measure cells indexed by technical feed/member IDs.
- const feedMeta=binding?.metadata?.feeds||{};
- const keysFor=(id)=>{const f=feedMeta[id];const arr=Array.isArray(f)?f:(f?[f]:[]);return arr.flatMap(x=>[x?.id,x?.name,x?.description,x?.label,x?.key].filter(Boolean));};
- const xkeys=[...keysFor('x'), 'X','x'];const ykeys=[...keysFor('y'),'Y','y'];
- const measureKeys=keysFor('measures');
- const find=(row,keys)=>{for(const k of keys){if(Object.prototype.hasOwnProperty.call(row,k)){const n=this.numeric(row[k]);if(Number.isFinite(n))return n;}}return NaN;};
- return data.map(row=>{let x=find(row,xkeys),y=find(row,ykeys);if(!Number.isFinite(x)||!Number.isFinite(y)){
-  // Fallback for one multi-measure feed: identify members named X and Y.
-  const entries=Object.entries(row).filter(([k,v])=>k!=='POINT_ID'&&typeof v==='object'&&v!==null);
-  for(const [key,val] of entries){const label=[key,val?.description,val?.label,val?.id].join(' ').toUpperCase();if(!Number.isFinite(x)&&/(^|\W)X($|\W)/.test(label))x=this.numeric(val);if(!Number.isFinite(y)&&/(^|\W)Y($|\W)/.test(label))y=this.numeric(val);}
+ numeric(cell){
+  if(cell==null)return NaN;
+  if(typeof cell==='number')return cell;
+  if(typeof cell==='string'){const s=cell.trim().replace(/\s/g,'');if(!s)return NaN;let n=Number(s);if(Number.isFinite(n))return n;const european=s.replace(/\./g,'').replace(',','.');return Number(european);}
+  if(typeof cell==='object')for(const k of ['raw','rawValue','value','formatted','formattedValue']){if(cell[k]!=null){const n=this.numeric(cell[k]);if(Number.isFinite(n))return n;}}
+  return NaN;
  }
- return {x,y};}).filter(p=>Number.isFinite(p.x)&&Number.isFinite(p.y));}
+ getBinding(){return this._dataBinding||this.dataBindings?.getDataBinding?.('dataBinding')||this.dataBindings?.dataBinding||null;}
+ readPoints(binding){
+  const data=binding?.data||binding?.getData?.()?.data||[];
+  this._diagnostic={rows:Array.isArray(data)?data.length:0,keys:Array.isArray(data)&&data.length?Object.keys(data[0]):[],feeds:binding?.metadata?.feeds||null};
+  if(!Array.isArray(data))return [];
+  const feeds=binding?.metadata?.feeds||{};
+  const lookup=(id)=>{
+   const feed=Array.isArray(feeds)?feeds.find(f=>f.id===id):feeds[id];
+   const values=Array.isArray(feed)?feed:(feed?[feed]:[]);
+   return values.flatMap(f=>[f?.id,f?.key,f?.name,f?.description,f?.label,f?.memberId,f?.member].filter(v=>typeof v==='string'));
+  };
+  const xkeys=[...lookup('x'),'X','x'];const ykeys=[...lookup('y'),'Y','y'];
+  const extract=(row,keys)=>{for(const key of keys){if(Object.hasOwn(row,key)){const n=this.numeric(row[key]);if(Number.isFinite(n))return n;}}return NaN;};
+  return data.map(row=>{
+   let x=extract(row,xkeys),y=extract(row,ykeys);
+   // SAC may provide opaque measure keys. Read measure metadata attached to each cell.
+   for(const [key,cell] of Object.entries(row)){
+    if(cell==null||typeof cell!=='object')continue;
+    const labels=[key,cell.id,cell.key,cell.label,cell.description,cell.memberId].filter(Boolean).join(' ').toUpperCase();
+    if(!Number.isFinite(x)&&/(^|[^A-Z])X([^A-Z]|$)/.test(labels))x=this.numeric(cell);
+    if(!Number.isFinite(y)&&/(^|[^A-Z])Y([^A-Z]|$)/.test(labels))y=this.numeric(cell);
+   }
+   // If exactly two numeric measure cells exist, use the feed/row order as last resort.
+   if(!Number.isFinite(x)||!Number.isFinite(y)){
+    const numericCells=Object.entries(row).filter(([key,cell])=>key!=='POINT_ID'&&key!=='point'&&Number.isFinite(this.numeric(cell)));
+    if(numericCells.length===2){if(!Number.isFinite(x))x=this.numeric(numericCells[0][1]);if(!Number.isFinite(y))y=this.numeric(numericCells[1][1]);}
+   }
+   return {x,y};
+  }).filter(p=>Number.isFinite(p.x)&&Number.isFinite(p.y));
+ }
  render(){if(!this.isConnected||!this.shadowRoot.querySelector('canvas'))return;const binding=this.getBinding();const status=this.shadowRoot.querySelector('.status');const points=this.readPoints(binding);const canvas=this.shadowRoot.querySelector('canvas');const rect=canvas.getBoundingClientRect();if(rect.width<1||rect.height<1)return;const dpr=Math.min(devicePixelRatio||1,2);canvas.width=Math.round(rect.width*dpr);canvas.height=Math.round(rect.height*dpr);const ctx=canvas.getContext('2d');ctx.scale(dpr,dpr);ctx.clearRect(0,0,rect.width,rect.height);
- if(!points.length){status.textContent=binding?.state?`Keine XY-Punkte verfügbar (Binding: ${binding.state}). Prüfe Kennzahlen X und Y sowie POINT_ID.`:'Bitte SAC-Modell verbinden: Dimension POINT_ID, Kennzahlen X und Y.';return;}
+ if(!points.length){status.textContent=binding?.state?`Keine XY-Punkte (Binding: ${binding.state}; Zeilen: ${this._diagnostic?.rows||0}; Spalten: ${(this._diagnostic?.keys||[]).join(', ')||'keine'}).`:'Bitte SAC-Modell verbinden: Dimension POINT_ID, Kennzahlen X und Y.';console.log('[IJUNO XY] Diagnose',this._diagnostic,'Beispielzeile',binding?.data?.[0]);return;}
  const xs=points.map(p=>p.x),ys=points.map(p=>p.y);let minX=Math.min(...xs),maxX=Math.max(...xs),minY=Math.min(...ys),maxY=Math.max(...ys);const dx=Math.max(maxX-minX,1),dy=Math.max(maxY-minY,1);const padding=16;const scale=Math.min((rect.width-2*padding)/dx,(rect.height-2*padding)/dy);const ox=(rect.width-dx*scale)/2,oy=(rect.height-dy*scale)/2;ctx.fillStyle=this.options.dotColor||'#d41478';const r=Math.max(0.5,Number(this.options.pointRadius)||2.3);for(const p of points){const px=ox+(p.x-minX)*scale;const py=oy+(this.options.flipY?(maxY-p.y):(p.y-minY))*scale;ctx.beginPath();ctx.arc(px,py,r,0,Math.PI*2);ctx.fill();}status.textContent=`${points.length.toLocaleString('de-DE')} Datenpunkte aus dem SAC Data Binding · X ${minX}–${maxX} · Y ${minY}–${maxY}`;
  }
 }
