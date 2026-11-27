@@ -1,0 +1,9 @@
+(function(){
+ class Styling extends HTMLElement{
+ constructor(){super();this.attachShadow({mode:'open'});this.shadowRoot.innerHTML=`<style>:host{font:13px Arial;display:block;padding:12px}label{display:block;margin:0 0 14px}input[type=text]{box-sizing:border-box;width:100%;margin-top:5px;padding:6px;border:1px solid #aaa;border-radius:3px}</style><label>Title<input id="title" type="text"></label><label>Subtitle<input id="subtitle" type="text"></label><label><input id="showSampleData" type="checkbox"> Show Sample Data</label>`;for(const k of ['title','subtitle','showSampleData']){const e=this.shadowRoot.getElementById(k);e.addEventListener('change',()=>this.dispatchEvent(new CustomEvent('propertiesChanged',{detail:{properties:{[k]:e.type==='checkbox'?e.checked:e.value}}})));}}
+ get title(){return this.shadowRoot.getElementById('title').value;}set title(v){this.shadowRoot.getElementById('title').value=v??'';}
+ get subtitle(){return this.shadowRoot.getElementById('subtitle').value;}set subtitle(v){this.shadowRoot.getElementById('subtitle').value=v??'';}
+ get showSampleData(){return this.shadowRoot.getElementById('showSampleData').checked;}set showSampleData(v){this.shadowRoot.getElementById('showSampleData').checked=v===true;}
+ }
+ if(!customElements.get('com-openai-ibcs-barchart-styling'))customElements.define('com-openai-ibcs-barchart-styling',Styling);
+})();
